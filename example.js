@@ -11,12 +11,11 @@ var ldap_host = 'ldap.mycompany.com',
     username  = 'someuser',
     password  = 'somepass';
 
-sys.puts('Before authenticate()');
-
-ldapauth.authenticate(ldap_host, ldap_port, username, password, 
+ldapauth.authenticate(ldap_host, ldap_port, username, password,
   function(err, result) {
-    sys.puts('Callback from authenticate(): ' + err + ',' + result);
+    if (err) {
+      sys.puts(err);
+    } else {
+      sys.puts('Result: ' + result);
+    }
   });
-
-sys.puts('After authenticate()');
-
