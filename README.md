@@ -8,21 +8,20 @@ This can be used in web-applications that authenticate users from a central dire
 
 It binds to the native OpenLDAP library (libldap) and calls ldap_simple_bind().
 
-For more info, see:
-
-    man 3 ldap_bind
-
 Building
 --------
 
-    node-waf configure build
+    ./build.sh
 
 Usage
 -----
 
-Ensure ldapauth.node is in your node path.
+Ensure libldap (OpenLDAP client library) is installed.
 
-    var ldapauth = require('ldapauth');
+You need to add ldapauth.node to your application.
+
+    var ldapauth = require('./ldapauth'); // path to ldapauth.node
+
     ldapauth.authenticate('some.host', 389 /*port*/, 'someuser', 'somepassword', 
       function(err, result) {
         if (err) {
@@ -35,7 +34,8 @@ Ensure ldapauth.node is in your node path.
 Resources
 ---------
 
-http://nodejs.org/
-http://www.openldap.org/
+* http://nodejs.org/
+* http://www.openldap.org/
+* man 3 ldap_bind
 
 *2010, Joe Walnes, joe@walnes.com, http://joewalnes.com/*

@@ -1,10 +1,7 @@
 #!/usr/bin/env node
 
-// Include build path
-require.paths.unshift('build/default');
-
 var sys       = require('sys'),
-    ldapauth  = require('ldapauth');
+    ldapauth  = require('./ldapauth');
 
 var ldap_host = 'ldap.mycompany.com',
     ldap_port = 389,
