@@ -11,6 +11,7 @@ def configure(conf):
 
 def build(bld):
   obj = bld.new_task_gen('cxx', 'shlib', 'node_addon')
-  obj.cxxflags = ['-lldap', '-DLDAP_DEPRECATED']
+  obj.cxxflags = ['-DLDAP_DEPRECATED']
   obj.target = 'ldapauth'
   obj.source = 'ldapauth.cc'
+  obj.lib = ['ldap']
