@@ -1,3 +1,3 @@
 #!/bin/sh
 
-node-waf configure build && cp build/default/ldapauth.node example/
+node-waf configure build && cp build/default/ldapauth.node ./

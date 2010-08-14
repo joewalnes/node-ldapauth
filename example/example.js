@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 var sys       = require('sys'),
-    ldapauth  = require('./ldapauth');
+    ldapauth  = require('../ldapauth'); // Path to ldapauth.node
 
 var ldap_host = 'ldap.mycompany.com',
     ldap_port = 389,
