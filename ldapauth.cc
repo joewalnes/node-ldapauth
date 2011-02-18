@@ -63,6 +63,16 @@ struct auth_request
   bool authenticated;
 };
 
+struct search_request : auth_request
+{
+  // Search Input params
+  char *base;
+  char *filter;
+
+  // Results
+  Handle<Object> results;
+};
+
 // Runs on background thread, performing the actual LDAP request.
 static int EIO_Authenticate(eio_req *req) 
 {
@@ -112,6 +122,89 @@ static int EIO_AfterAuthenticate(eio_req *req)
   return 0;
 }
 
+static int EIO_Search(eio_req *req)
+{
+  struct search_request *search_req = (struct search_request*)(req->data);
+
+  // Connect to LDAP server
+  //printf("Trying to open connection");
+  LDAP *ldap = ldap_open(search_req->host, search_req->port);
+
+  if (ldap == NULL) {
+    search_req->connected = false;
+    search_req->authenticated = false;
+  } else {
+    // Bind to server to authenticate
+    int ldap_result = ldap_simple_bind_s(ldap, search_req->username, search_req->password);
+    if (ldap_result == LDAP_SUCCESS)
+    {
+      char **attrs = NULL;
+
+      LDAPMessage *resultMessage;
+      struct timeval *timeout = (struct timeval*) calloc(1, sizeof(struct timeval));
+      timeout->tv_sec = 10;
+      int ldap_result = ldap_search_ext_s(ldap, search_req->base, LDAP_SCOPE_SUB, search_req->filter, attrs, 0, NULL, NULL, timeout, 0, &resultMessage);
+
+      search_req->results = Object::New();
+
+      if (ldap_result == LDAP_SUCCESS) {
+        BerElement *berptr;
+        char **vals;
+        char *attr;
+
+        for (attr = ldap_first_attribute(ldap, resultMessage, &berptr); attr; attr = ldap_next_attribute(ldap, resultMessage, berptr))
+        {
+          vals = ldap_get_values(ldap, resultMessage, attr);
+          int numVals = ldap_count_values(vals);
+
+          if (numVals == 1) {
+            search_req->results->Set(String::New(attr), String::New(vals[0]));
+          } else {
+            Local<Array> jsValues = Array::New(numVals);
+            for (int idx = 0; idx < numVals; ++idx)
+            {
+              jsValues->Set(Integer::New(idx), String::New(vals[idx]));
+            }
+            search_req->results->Set(String::New(attr), jsValues);
+          }
+          ldap_value_free(vals);
+          ldap_memfree(attr);
+        }
+        ber_free(berptr, 0);
+      }
+
+      free(timeout);
+
+      search_req->connected = true;
+    } else {
+      search_req->connected = false;
+    }
+    ldap_unbind(ldap);
+  }
+
+  return 0;
+}
+
+static int EIO_AfterSearch(eio_req *req)
+{
+  ev_unref(EV_DEFAULT_UC);
+  HandleScope scope;
+
+  struct search_request *search_req = (struct search_request *)(req->data);
+
+  // Invoke JS callback function
+  Handle<Value> callback_args[2];
+  callback_args[0] = search_req->connected ? (Handle<Value>)Undefined() : Exception::Error(String::New("LDAP connection failed"));
+  callback_args[1] = search_req->results;
+  search_req->callback->Call(Context::GetCurrent()->Global(), 2, callback_args);
+
+  // Cleanup search_request struct
+  search_req->callback.Dispose();
+  free(search_req);
+
+  return 0;
+}
+
 // Exposed authenticate() JavaScript function
 static Handle<Value> Authenticate(const Arguments& args)
 {
@@ -148,10 +241,46 @@ static Handle<Value> Authenticate(const Arguments& args)
   return Undefined();
 }
 
+// Exposed user by login JavaScript function
+static Handle<Value> Search(const Arguments& args)
+{
+  HandleScope scope;
+
+  // Validate args.
+  // TODO
+
+  // Input params.
+  String::Utf8Value host(args[0]);
+  int port = args[1]->Int32Value();
+  String::Utf8Value username(args[2]);
+  String::Utf8Value password(args[3]);
+  String::Utf8Value base(args[4]);
+  String::Utf8Value filter(args[5]);
+  Local<Function> callback = Local<Function>::Cast(args[6]);
+
+  // Store all parameters in search_request struct, which shall be passed across threads.
+  struct search_request *search_req = (struct search_request*) calloc(1, sizeof(struct search_request));
+  search_req->host = strdup(*host);
+  search_req->port = port;
+  search_req->username = strdup(*username);
+  search_req->password = strdup(*password);
+  search_req->base = strdup(*base);
+  search_req->filter = strdup(*filter);
+  search_req->callback = Persistent<Function>::New(callback);
+
+  // Use libeio to invoke EIO_Search in the background thread pool
+  // and call EIO_AfterSearch in the foreground when done
+  eio_custom(EIO_Search, EIO_PRI_DEFAULT, EIO_AfterSearch, search_req);
+  ev_ref(EV_DEFAULT_UC);
+
+  return Undefined();
+}
+
 // Entry point for native Node module
 extern "C" void
 init (Handle<Object> target) 
 {
   HandleScope scope;
   target->Set(String::New("authenticate"), FunctionTemplate::New(Authenticate)->GetFunction());
+  target->Set(String::New("search"), FunctionTemplate::New(Search)->GetFunction());
 }
