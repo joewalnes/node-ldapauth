@@ -44,6 +44,12 @@ Invoke user supplied JS callback
 #include <unistd.h>
 #include <stdlib.h>
 
+#include <map>
+#include <vector>
+#include <algorithm>
+#include <string>
+#include <iostream>
+
 using namespace v8;
 
 #define THROW(message) ThrowException(Exception::TypeError(String::New(message)))
@@ -61,6 +67,14 @@ struct auth_request
   // Result
   bool connected;
   bool authenticated;
+
+  ~auth_request()
+  {
+    free(host);
+    free(username);
+    free(password);
+    callback.Dispose();
+  }
 };
 
 struct search_request : auth_request
@@ -70,7 +84,13 @@ struct search_request : auth_request
   char *filter;
 
   // Results
-  Handle<Object> results;
+  std::map<char*, std::vector<char*> > result;
+
+  ~search_request()
+  {
+    free(base);
+    free(filter);
+  }
 };
 
 // Runs on background thread, performing the actual LDAP request.
@@ -93,7 +113,7 @@ static int EIO_Authenticate(eio_req *req)
     // Bind with credentials, passing result into auth_request struct
     int ldap_result = ldap_simple_bind_s(ldap, auth_req->username, auth_req->password);
     // Disconnect
-    ldap_unbind(ldap);
+    ldap_unbind_s(ldap);
 
     auth_req->connected = true;
     auth_req->authenticated = (ldap_result == LDAP_SUCCESS);
@@ -116,93 +136,75 @@ static int EIO_AfterAuthenticate(eio_req *req)
   auth_req->callback->Call(Context::GetCurrent()->Global(), 2, callback_args);
 
   // Cleanup auth_request struct
-  auth_req->callback.Dispose();
-  free(auth_req);
+  delete auth_req;
 
   return 0;
 }
 
-static int EIO_Search(eio_req *req)
+static std::map<char*, std::vector<char*> > ResultObject(LDAP* ldap, LDAPMessage *resultMessage)
 {
-  struct search_request *search_req = (struct search_request*)(req->data);
+  std::map<char*, std::vector<char*> > results;
 
-  // Connect to LDAP server
-  //printf("Trying to open connection");
-  LDAP *ldap = ldap_open(search_req->host, search_req->port);
+  BerElement *berptr;
+  char *attr;
 
-  if (ldap == NULL) {
-    search_req->connected = false;
-    search_req->authenticated = false;
-  } else {
-    // Bind to server to authenticate
-    int ldap_result = ldap_simple_bind_s(ldap, search_req->username, search_req->password);
-    if (ldap_result == LDAP_SUCCESS)
+  for (attr = ldap_first_attribute(ldap, resultMessage, &berptr); attr; attr = ldap_next_attribute(ldap, resultMessage, berptr))
+  {
+    char **vals = ldap_get_values(ldap, resultMessage, attr);
+    int numVals = ldap_count_values(vals);
+
+    std::vector<char*> values;
+    for (int idx = 0; idx < numVals; idx++)
     {
-      char **attrs = NULL;
-
-      LDAPMessage *resultMessage;
-      struct timeval *timeout = (struct timeval*) calloc(1, sizeof(struct timeval));
-      timeout->tv_sec = 10;
-      int ldap_result = ldap_search_ext_s(ldap, search_req->base, LDAP_SCOPE_SUB, search_req->filter, attrs, 0, NULL, NULL, timeout, 0, &resultMessage);
-
-      search_req->results = Object::New();
-
-      if (ldap_result == LDAP_SUCCESS) {
-        BerElement *berptr;
-        char **vals;
-        char *attr;
-
-        for (attr = ldap_first_attribute(ldap, resultMessage, &berptr); attr; attr = ldap_next_attribute(ldap, resultMessage, berptr))
-        {
-          vals = ldap_get_values(ldap, resultMessage, attr);
-          int numVals = ldap_count_values(vals);
-
-          if (numVals == 1) {
-            search_req->results->Set(String::New(attr), String::New(vals[0]));
-          } else {
-            Local<Array> jsValues = Array::New(numVals);
-            for (int idx = 0; idx < numVals; ++idx)
-            {
-              jsValues->Set(Integer::New(idx), String::New(vals[idx]));
-            }
-            search_req->results->Set(String::New(attr), jsValues);
-          }
-          ldap_value_free(vals);
-          ldap_memfree(attr);
-        }
-        ber_free(berptr, 0);
-      }
-
-      free(timeout);
-
-      search_req->connected = true;
-    } else {
-      search_req->connected = false;
+      values.push_back(strdup(vals[idx]));
     }
-    ldap_unbind(ldap);
+
+    results.insert(std::pair<char*, std::vector<char*> >(strdup(attr), values));
+    ldap_value_free(vals);
+    ldap_memfree(attr);
   }
 
-  return 0;
+  ber_free(berptr, 0);
+
+  return results;
 }
 
-static int EIO_AfterSearch(eio_req *req)
+static Handle<Value> JsResultObject(std::map<char*, std::vector<char*> > c_results)
 {
-  ev_unref(EV_DEFAULT_UC);
   HandleScope scope;
 
-  struct search_request *search_req = (struct search_request *)(req->data);
+  Local<Object> results = Object::New();
 
-  // Invoke JS callback function
-  Handle<Value> callback_args[2];
-  callback_args[0] = search_req->connected ? (Handle<Value>)Undefined() : Exception::Error(String::New("LDAP connection failed"));
-  callback_args[1] = search_req->results;
-  search_req->callback->Call(Context::GetCurrent()->Global(), 2, callback_args);
+  BerElement *berptr;
 
-  // Cleanup search_request struct
-  search_req->callback.Dispose();
-  free(search_req);
+  for (std::map<char*, std::vector<char*> >::const_iterator iter = c_results.begin(); iter != c_results.end(); ++iter )
+  {
+    char* attr = iter->first;
+    std::vector<char*> values = iter->second;
 
-  return 0;
+    int numVals = values.size();
+
+    if (numVals == 1) {
+      results->Set(String::New(attr), String::New(values[0]));
+    } else {
+      Local<Array> jsValues = Array::New(numVals);
+      for (int idx = 0; idx < numVals; idx++)
+      {
+        jsValues->Set(Integer::New(idx), String::New(values.at(idx)));
+      }
+      results->Set(String::New(attr), jsValues);
+    }
+
+    while(!values.empty()) {
+      free(values.back());
+      values.pop_back();
+    }
+    free(attr);
+  }
+
+  ber_free(berptr, 0);
+
+  return scope.Close(results);
 }
 
 // Exposed authenticate() JavaScript function
@@ -226,7 +228,8 @@ static Handle<Value> Authenticate(const Arguments& args)
   Local<Function> callback = Local<Function>::Cast(args[4]);
   
   // Store all parameters in auth_request struct, which shall be passed across threads.
-  struct auth_request *auth_req = (struct auth_request*) calloc(1, sizeof(struct auth_request));
+  //struct auth_request *auth_req = (struct auth_request*) calloc(1, sizeof(struct auth_request));
+  struct auth_request *auth_req = new auth_request;
   auth_req->host = strdup(*host);
   auth_req->port = port;
   auth_req->username = strdup(*username);
@@ -241,14 +244,8 @@ static Handle<Value> Authenticate(const Arguments& args)
   return Undefined();
 }
 
-// Exposed user by login JavaScript function
-static Handle<Value> Search(const Arguments& args)
-{
-  HandleScope scope;
-
-  // Validate args.
-  // TODO
-
+static search_request* BuildSearchRequest(const Arguments& args) 
+{ 
   // Input params.
   String::Utf8Value host(args[0]);
   int port = args[1]->Int32Value();
@@ -259,7 +256,8 @@ static Handle<Value> Search(const Arguments& args)
   Local<Function> callback = Local<Function>::Cast(args[6]);
 
   // Store all parameters in search_request struct, which shall be passed across threads.
-  struct search_request *search_req = (struct search_request*) calloc(1, sizeof(struct search_request));
+  //struct search_request *search_req = (struct search_request*) calloc(1, sizeof(struct search_request));
+  struct search_request *search_req = new search_request;
   search_req->host = strdup(*host);
   search_req->port = port;
   search_req->username = strdup(*username);
@@ -268,8 +266,108 @@ static Handle<Value> Search(const Arguments& args)
   search_req->filter = strdup(*filter);
   search_req->callback = Persistent<Function>::New(callback);
 
-  // Use libeio to invoke EIO_Search in the background thread pool
-  // and call EIO_AfterSearch in the foreground when done
+  return search_req;
+}
+
+static void SearchAncestors(LDAP *ldap, char* group, char* base, std::vector<char*> *groups)
+{
+    std::string group_dn (group);
+    std::string group_filter ("(distinguishedName=" + group_dn + ")");
+
+    LDAPMessage *groupSearchResultMessage;
+    int ldap_result = ldap_search_ext_s(ldap, base, LDAP_SCOPE_SUB, group_filter.c_str(), NULL, 0, NULL, NULL, NULL, 0, &groupSearchResultMessage);
+    if(ldap_result == LDAP_SUCCESS)
+    {
+      char **names = ldap_get_values(ldap, groupSearchResultMessage, "name");
+      char* group_short_name;
+      if (ldap_count_values(names)) {
+        group_short_name = names[0];
+      } else {
+        group_short_name = group;
+      }
+
+      groups->push_back(strdup(group_short_name));
+
+      char** ancestors = ldap_get_values(ldap, groupSearchResultMessage, "memberOf");
+      int numAncestors = ldap_count_values(ancestors);
+      if (numAncestors == 0) {
+      }
+      for( int j = 0; j < numAncestors; j++) 
+      {
+        SearchAncestors(ldap, ancestors[j], base, groups);
+      }
+      ldap_value_free(ancestors);
+      ldap_value_free(names);
+    }
+    else 
+    {
+      groups->push_back(strdup(group));
+    }
+    ldap_msgfree(groupSearchResultMessage);
+}
+
+static int EIO_Search(eio_req *req)
+{
+  struct search_request *search_req = (struct search_request*)(req->data);
+  LDAP *ldap = ldap_open(search_req->host, search_req->port);
+
+  if (ldap == NULL) {
+    search_req->connected = false;
+  } else {
+    ldap_simple_bind_s(ldap, search_req->username, search_req->password);
+
+    LDAPMessage *resultMessage;
+    char **attrs = NULL;
+    ldap_search_ext_s(ldap, search_req->base, LDAP_SCOPE_SUB, search_req->filter, attrs, 0, NULL, NULL, NULL, 0, &resultMessage);
+
+    std::vector<char*> groups;
+
+    char** members = ldap_get_values(ldap, resultMessage, "memberOf");
+    int numMembers = ldap_count_values(members);
+
+    for (int i = 0; i < numMembers; i++)
+    {
+      SearchAncestors(ldap, members[i], search_req->base, &groups);
+    }
+
+    ldap_value_free(members);
+
+    std::map<char*, std::vector<char*> > results = ResultObject(ldap, resultMessage);
+    results.insert(std::pair<char*, std::vector<char*> >(strdup("allGroups"), groups));
+    search_req->result = results;
+    search_req->connected = true;
+
+    ldap_msgfree(resultMessage);
+    ldap_unbind_s(ldap);
+  }
+
+  return 0;
+}
+
+static int EIO_AfterSearch(eio_req *req) 
+{
+
+  ev_unref(EV_DEFAULT_UC);
+  HandleScope scope;
+  struct search_request *search_req = (struct search_request *)(req->data);
+
+  Handle<Value> jsResults = search_req->connected ? JsResultObject(search_req->result) : (Handle<Value>)Undefined();
+
+  Handle<Value> callback_args[2];
+  callback_args[0] = search_req->connected ? (Handle<Value>)Undefined() : Exception::Error(String::New("LDAP connection failed"));
+  callback_args[1] = jsResults;
+  search_req->callback->Call(Context::GetCurrent()->Global(), 2, callback_args);
+
+  //cleanup search_request struct
+  delete search_req;
+  return 0;
+}
+
+static Handle<Value> Search(const Arguments &args)
+{
+  HandleScope scope;
+  search_request *search_req = BuildSearchRequest(args);
+
   eio_custom(EIO_Search, EIO_PRI_DEFAULT, EIO_AfterSearch, search_req);
   ev_ref(EV_DEFAULT_UC);
 
