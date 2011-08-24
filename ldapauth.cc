@@ -58,6 +58,7 @@ using namespace v8;
 struct auth_request 
 {
   // Input params
+  char *scheme;
   char *host;
   int port;
   char *username;
@@ -70,6 +71,7 @@ struct auth_request
 
   ~auth_request()
   {
+    free(scheme);
     free(host);
     free(username);
     free(password);
@@ -105,8 +107,13 @@ static int EIO_Authenticate(eio_req *req)
   // synchronously.
   
   // Connect to LDAP server
-  LDAP *ldap = ldap_open(auth_req->host, auth_req->port);
-  if (ldap == NULL) {
+  LDAP *ldap = ldap_init(auth_req->host, auth_req->port);
+  unsigned long int len = 5 + sizeof(auth_req->scheme) + sizeof(auth_req->host) + sizeof(auth_req->port);
+  char uri[len];
+  sprintf(uri, "%s://%s:%d/", auth_req->scheme, auth_req->host, auth_req->port);
+
+  int res = ldap_initialize(&ldap, uri);
+  if (ldap == NULL  || res < 0) {
     auth_req->connected = false;
     auth_req->authenticated = false;
   } else {
@@ -213,23 +220,26 @@ static Handle<Value> Authenticate(const Arguments& args)
   HandleScope scope;
   
   // Validate args.
-  if (args.Length() < 5)      return THROW("Required arguments: ldap_host, ldap_port, username, password, callback");
-  if (!args[0]->IsString())   return THROW("ldap_host should be a string");
-  if (!args[1]->IsInt32())    return THROW("ldap_port should be a string");
-  if (!args[2]->IsString())   return THROW("username should be a string");
-  if (!args[3]->IsString())   return THROW("password should be a string");
-  if (!args[4]->IsFunction()) return THROW("callback should be a function");
+  if (args.Length() < 6)      return THROW("Required arguments: ldap_scheme, ldap_host, ldap_port, username, password, callback");
+  if (!args[0]->IsString())   return THROW("ldap_scheme should be a string");
+  if (!args[1]->IsString())   return THROW("ldap_host should be a string");
+  if (!args[2]->IsInt32())    return THROW("ldap_port should be a string");
+  if (!args[3]->IsString())   return THROW("username should be a string");
+  if (!args[4]->IsString())   return THROW("password should be a string");
+  if (!args[5]->IsFunction()) return THROW("callback should be a function");
 
   // Input params.
-  String::Utf8Value host(args[0]);
-  int port = args[1]->Int32Value();
-  String::Utf8Value username(args[2]);
-  String::Utf8Value password(args[3]);
-  Local<Function> callback = Local<Function>::Cast(args[4]);
+  String::Utf8Value scheme(args[0]);
+  String::Utf8Value host(args[1]);
+  int port = args[2]->Int32Value();
+  String::Utf8Value username(args[3]);
+  String::Utf8Value password(args[4]);
+  Local<Function> callback = Local<Function>::Cast(args[5]);
   
   // Store all parameters in auth_request struct, which shall be passed across threads.
   //struct auth_request *auth_req = (struct auth_request*) calloc(1, sizeof(struct auth_request));
   struct auth_request *auth_req = new auth_request;
+  auth_req->scheme = strdup(*scheme);
   auth_req->host = strdup(*host);
   auth_req->port = port;
   auth_req->username = strdup(*username);
