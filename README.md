@@ -1,3 +1,7 @@
+* _This library is only for LDAP authentication. If you're looking for a more complete
+  LDAP implementation, check out http://ldapjs.org/_
+
+
 LDAP Authentication for Node.JS
 ===============================
 
