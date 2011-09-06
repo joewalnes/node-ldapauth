@@ -223,7 +223,7 @@ static Handle<Value> Authenticate(const Arguments& args)
   if (args.Length() < 6)      return THROW("Required arguments: ldap_scheme, ldap_host, ldap_port, username, password, callback");
   if (!args[0]->IsString())   return THROW("ldap_scheme should be a string");
   if (!args[1]->IsString())   return THROW("ldap_host should be a string");
-  if (!args[2]->IsInt32())    return THROW("ldap_port should be a string");
+  if (!args[2]->IsInt32())    return THROW("ldap_port should be an integer");
   if (!args[3]->IsString())   return THROW("username should be a string");
   if (!args[4]->IsString())   return THROW("password should be a string");
   if (!args[5]->IsFunction()) return THROW("callback should be a function");
