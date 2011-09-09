@@ -364,8 +364,6 @@ static int EIO_AfterSearch(eio_req *req)
   callback_args[1] = jsResults;
   search_req->callback->Call(Context::GetCurrent()->Global(), 2, callback_args);
 
-  //cleanup search_request struct
-  delete search_req;
   return 0;
 }
 
