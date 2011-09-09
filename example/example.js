@@ -3,7 +3,8 @@
 var sys       = require('sys'),
     ldapauth  = require('../ldapauth'); // Path to ldapauth.node
 
-var ldap_host = 'some.ldap.server',
+var scheme    = 'ldap',
+    ldap_host = 'some.ldap.server',
     ldap_port = 389,
     username  = 'SOMEDOMAIN\\SOMEUSER',
     password  = 'SOMEPASS'
@@ -19,7 +20,7 @@ ldapauth.search(ldap_host, ldap_port, username, password, base, filter,
     }
   });
 
-ldapauth.authenticate(ldap_host, ldap_port, username, password,
+ldapauth.authenticate(scheme, ldap_host, ldap_port, username, password,
   function(err, result) {
     if (err) {
       sys.puts(err);
