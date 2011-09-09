@@ -182,8 +182,6 @@ static Handle<Value> JsResultObject(std::map<char*, std::vector<char*> > c_resul
 
   Local<Object> results = Object::New();
 
-  BerElement *berptr;
-
   for (std::map<char*, std::vector<char*> >::const_iterator iter = c_results.begin(); iter != c_results.end(); ++iter )
   {
     char* attr = iter->first;
@@ -208,8 +206,6 @@ static Handle<Value> JsResultObject(std::map<char*, std::vector<char*> > c_resul
     }
     free(attr);
   }
-
-  ber_free(berptr, 0);
 
   return scope.Close(results);
 }
