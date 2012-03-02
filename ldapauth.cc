@@ -39,7 +39,6 @@ Invoke user supplied JS callback
 
 #include <v8.h>
 #include <node.h>
-#include <node_events.h>
 #include <ldap.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -96,7 +95,7 @@ struct search_request : auth_request
 };
 
 // Runs on background thread, performing the actual LDAP request.
-static int EIO_Authenticate(eio_req *req) 
+static void EIO_Authenticate(eio_req *req) 
 {
   struct auth_request *auth_req = (struct auth_request*)(req->data);
 
@@ -125,8 +124,8 @@ static int EIO_Authenticate(eio_req *req)
     auth_req->connected = true;
     auth_req->authenticated = (ldap_result == LDAP_SUCCESS);
   }
-  
-  return 0;
+
+  return;
 }
 
 // Called on main event loop when background thread has completed
@@ -312,7 +311,7 @@ static void SearchAncestors(LDAP *ldap, char* group, char* base, std::vector<cha
     ldap_msgfree(groupSearchResultMessage);
 }
 
-static int EIO_Search(eio_req *req)
+static void EIO_Search(eio_req *req)
 {
   struct search_request *search_req = (struct search_request*)(req->data);
   LDAP *ldap = ldap_open(search_req->host, search_req->port);
@@ -347,7 +346,7 @@ static int EIO_Search(eio_req *req)
     ldap_unbind_s(ldap);
   }
 
-  return 0;
+  return;
 }
 
 static int EIO_AfterSearch(eio_req *req) 
