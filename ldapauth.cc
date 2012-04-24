@@ -95,7 +95,7 @@ struct search_request : auth_request
 };
 
 // Runs on background thread, performing the actual LDAP request.
-static void EIO_Authenticate(eio_req *req) 
+static void EIO_Authenticate(uv_work_t* req) 
 {
   struct auth_request *auth_req = (struct auth_request*)(req->data);
 
@@ -129,7 +129,7 @@ static void EIO_Authenticate(eio_req *req)
 }
 
 // Called on main event loop when background thread has completed
-static int EIO_AfterAuthenticate(eio_req *req) 
+static void EIO_AfterAuthenticate(uv_work_t* req) 
 {
   ev_unref(EV_DEFAULT_UC);
   HandleScope scope;
@@ -144,7 +144,7 @@ static int EIO_AfterAuthenticate(eio_req *req)
   // Cleanup auth_request struct
   delete auth_req;
 
-  return 0;
+  return;
 }
 
 static std::map<char*, std::vector<char*> > ResultObject(LDAP* ldap, LDAPMessage *resultMessage)
@@ -241,9 +241,13 @@ static Handle<Value> Authenticate(const Arguments& args)
   auth_req->password = strdup(*password);
   auth_req->callback = Persistent<Function>::New(callback);
   
-  // Use libeio to invoke EIO_Authenticate() in background thread pool
+  uv_work_t *work_req = (uv_work_t *) (calloc(1, sizeof(uv_work_t)));
+  work_req->data = auth_req;
+
+  // Use uv_queue_work to invoke EIO_Authenticate() in background thread pool
   // and call EIO_AfterAuthententicate in the foreground when done
-  eio_custom(EIO_Authenticate, EIO_PRI_DEFAULT, EIO_AfterAuthenticate, auth_req);
+  uv_queue_work(uv_default_loop(), work_req, EIO_Authenticate, EIO_AfterAuthenticate);
+
   ev_ref(EV_DEFAULT_UC);
 
   return Undefined();
@@ -311,7 +315,7 @@ static void SearchAncestors(LDAP *ldap, char* group, char* base, std::vector<cha
     ldap_msgfree(groupSearchResultMessage);
 }
 
-static void EIO_Search(eio_req *req)
+static void EIO_Search(uv_work_t* req)
 {
   struct search_request *search_req = (struct search_request*)(req->data);
   LDAP *ldap = ldap_open(search_req->host, search_req->port);
@@ -349,7 +353,7 @@ static void EIO_Search(eio_req *req)
   return;
 }
 
-static int EIO_AfterSearch(eio_req *req) 
+static void EIO_AfterSearch(uv_work_t* req) 
 {
 
   ev_unref(EV_DEFAULT_UC);
@@ -363,7 +367,7 @@ static int EIO_AfterSearch(eio_req *req)
   callback_args[1] = jsResults;
   search_req->callback->Call(Context::GetCurrent()->Global(), 2, callback_args);
 
-  return 0;
+  return;
 }
 
 static Handle<Value> Search(const Arguments &args)
@@ -371,7 +375,11 @@ static Handle<Value> Search(const Arguments &args)
   HandleScope scope;
   search_request *search_req = BuildSearchRequest(args);
 
-  eio_custom(EIO_Search, EIO_PRI_DEFAULT, EIO_AfterSearch, search_req);
+  uv_work_t *work_req = (uv_work_t *) (calloc(1, sizeof(uv_work_t)));
+  work_req->data = search_req;
+
+  uv_queue_work(uv_default_loop(), work_req, EIO_Search, EIO_AfterSearch);
+
   ev_ref(EV_DEFAULT_UC);
 
   return Undefined();
