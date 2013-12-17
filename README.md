@@ -43,3 +43,7 @@ Resources
 * man 3 ldap_bind
 
 *2010, Joe Walnes, joe@walnes.com, http://joewalnes.com/*
+
+
+[![Bitdeli Badge](https://d2weczhvl823v0.cloudfront.net/joewalnes/node-ldapauth/trend.png)](https://bitdeli.com/free "Bitdeli Badge")
+
