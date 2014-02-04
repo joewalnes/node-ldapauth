@@ -278,10 +278,18 @@ static search_request* BuildSearchRequest(const Arguments& args)
   return search_req;
 }
 
-static void SearchAncestors(LDAP *ldap, char* group, char* base, std::vector<char*> *groups)
+static void SearchAncestors(LDAP *ldap, char* group, char* base, std::vector<char*> *groups, std::vector<char*> *full_groups)
 {
     std::string group_dn (group);
     std::string group_filter ("(distinguishedName=" + group_dn + ")");
+
+    std::vector<char *>::iterator it;
+    for (it = full_groups->begin() ; it < full_groups->end(); it++) {
+      std::string it_dn (*it);
+      if (it_dn == group_dn)
+        return;
+    }
+    full_groups->push_back(strdup(group));
 
     LDAPMessage *groupSearchResultMessage;
     int ldap_result = ldap_search_ext_s(ldap, base, LDAP_SCOPE_SUB, group_filter.c_str(), NULL, 0, NULL, NULL, NULL, 0, &groupSearchResultMessage);
@@ -303,7 +311,7 @@ static void SearchAncestors(LDAP *ldap, char* group, char* base, std::vector<cha
       }
       for( int j = 0; j < numAncestors; j++) 
       {
-        SearchAncestors(ldap, ancestors[j], base, groups);
+        SearchAncestors(ldap, ancestors[j], base, groups, full_groups);
       }
       ldap_value_free(ancestors);
       ldap_value_free(names);
@@ -329,14 +337,14 @@ static void EIO_Search(uv_work_t* req)
     char **attrs = NULL;
     ldap_search_ext_s(ldap, search_req->base, LDAP_SCOPE_SUB, search_req->filter, attrs, 0, NULL, NULL, NULL, 0, &resultMessage);
 
-    std::vector<char*> groups;
+    std::vector<char*> groups, full_groups;
 
     char** members = ldap_get_values(ldap, resultMessage, "memberOf");
     int numMembers = ldap_count_values(members);
 
     for (int i = 0; i < numMembers; i++)
     {
-      SearchAncestors(ldap, members[i], search_req->base, &groups);
+      SearchAncestors(ldap, members[i], search_req->base, &groups, &full_groups);
     }
 
     ldap_value_free(members);
